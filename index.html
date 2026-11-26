@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2a1633">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>SBT TikTok</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f3ef;color:#1d1a17}
+header{position:sticky;top:0;z-index:5;background:#2a1633;color:#fff;padding:12px 16px}
+header h1{font-size:17px;margin:0 0 2px;font-weight:600}
+header p{margin:0;font-size:13px;opacity:.85}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.tabs button,.bar label{border:1px solid #ffffff55;background:transparent;color:#fff;border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
+.tabs button.on{background:#fff;color:#2a1633}
+.bar label{background:#ffd76a;color:#2a1633;border-color:#ffd76a;font-weight:600}
+main{max-width:980px;margin:0 auto;padding:12px;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.card{background:#fff;border:1px solid #e4ded6;border-radius:14px;padding:12px;display:flex;gap:12px}
+.card.next{border:2px solid #7c3aed}
+.card.done{opacity:.55}
+.cover{width:96px;height:170px;object-fit:cover;border-radius:10px;flex:none;background:#ddd}
+.info{min-width:0;flex:1;display:flex;flex-direction:column;gap:6px}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;background:#efe7ff;color:#5b21b6;font-weight:600}
+.tag.ok{background:#dcfce7;color:#166534}
+.tag.warn{background:#fef3c7;color:#92400e}
+.title{font-weight:600;font-size:15px;margin:0}
+.time{font-size:13px;margin:0;line-height:1.4}
+.time b{font-weight:600}
+.cap{font-size:12.5px;white-space:pre-line;background:#faf8f5;border:1px solid #eee7de;border-radius:8px;padding:8px;max-height:84px;overflow:hidden;cursor:pointer}
+.cap.open{max-height:none}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.btns button,.btns select{font-size:13px;padding:8px;border-radius:9px;border:1px solid #d8d0c6;background:#fff;color:#1d1a17;cursor:pointer}
+.btns .main{background:#7c3aed;color:#fff;border-color:#7c3aed}
+.btns .full{grid-column:1/-1}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1d1a17;color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+#toast.show{opacity:1}
+.empty{grid-column:1/-1;text-align:center;color:#6b635a;padding:40px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Strange But True · TikTok slots</h1>
+  <p id="sum">Loading…</p>
+  <div class="bar">
+    <div class="tabs"><button data-f="todo" class="on">To do</button> <button data-f="done">Scheduled</button> <button data-f="all">All</button></div>
+    <label>Load videos<input id="pick" type="file" accept="video/mp4" multiple hidden></label>
+  </div>
+</header>
+<main id="list"></main>
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let slots = [], filter = 'todo', videos = {};
+const status = JSON.parse(localStorage.getItem('sbt-status') || '{}');
+const swap = JSON.parse(localStorage.getItem('sbt-swap') || '{}');
+const save = () => { localStorage.setItem('sbt-status', JSON.stringify(status)); localStorage.setItem('sbt-swap', JSON.stringify(swap)); };
+const toast = t => { const e = $('#toast'); e.textContent = t; e.classList.add('show'); clearTimeout(e._t); e._t = setTimeout(() => e.classList.remove('show'), 1800); };
+
+function db() {
+  return new Promise((ok, no) => { const r = indexedDB.open('sbt-videos', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('v'); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+}
+async function dbAll() {
+  const d = await db(); return new Promise(ok => { const out = {}; const tx = d.transaction('v').objectStore('v').openCursor();
+    tx.onsuccess = e => { const c = e.target.result; if (c) { out[c.key] = c.value; c.continue(); } else ok(out); }; });
+}
+async function dbPut(k, v) { const d = await db(); return new Promise((ok, no) => { const t = d.transaction('v', 'readwrite'); t.objectStore('v').put(v, k); t.oncomplete = ok; t.onerror = () => no(t.error); }); }
+
+const slotOf = s => { const n = swap[s.slot] ?? s.video; return slots.find(x => x.video === n) || s; };
+function dayTag(iso) {
+  const d = new Date(iso), now = new Date(); const a = new Date(d.toDateString()), b = new Date(now.toDateString());
+  const diff = Math.round((a - b) / 864e5); return diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff < 0 ? 'Past' : '';
+}
+
+function render() {
+  const loaded = Object.keys(videos).length, done = slots.filter(s => status[s.slot]).length;
+  $('#sum').textContent = `${done} of ${slots.length} scheduled · ${loaded} videos loaded on this device`;
+  const nextSlot = slots.find(s => !status[s.slot]);
+  const list = slots.filter(s => filter === 'all' || (filter === 'done') === !!status[s.slot]);
+  $('#list').innerHTML = list.length ? '' : '<p class="empty">Nothing here.</p>';
+  for (const s of list) {
+    const v = slotOf(s), has = !!videos[v.video], tag = dayTag(s.et);
+    const el = document.createElement('div');
+    el.className = 'card' + (status[s.slot] ? ' done' : '') + (s === nextSlot ? ' next' : '');
+    el.innerHTML = `
+      <img class="cover" src="${v.cover}" alt="">
+      <div class="info">
+        <div>${s === nextSlot ? '<span class="tag">Next</span> ' : ''}${tag ? `<span class="tag warn">${tag}</span> ` : ''}${status[s.slot] ? '<span class="tag ok">Scheduled</span>' : ''}</div>
+        <p class="title">${String(v.video).padStart(2, '0')} · ${v.title}</p>
+        <p class="time">🇺🇸 <b>${s.et_label}</b> ET<br>🇲🇦 ${s.ma_label} Morocco</p>
+        <div class="cap" title="Tap to expand">${v.caption.replace(/</g, '&lt;')}</div>
+        <div class="btns">
+          <button class="main" data-a="copy">Copy caption</button>
+          <button data-a="share">${has ? 'Share video' : 'Video not loaded'}</button>
+          <button data-a="cover">Save cover</button>
+          <select data-a="swap" aria-label="Swap video">${slots.map(o => `<option value="${o.video}" ${o.video === v.video ? 'selected' : ''}>Swap: ${String(o.video).padStart(2, '0')}</option>`).join('')}</select>
+          <button class="full" data-a="done">${status[s.slot] ? 'Undo scheduled' : 'Mark as scheduled ✓'}</button>
+        </div>
+      </div>`;
+    el.querySelector('.cap').onclick = e => e.target.classList.toggle('open');
+    el.querySelectorAll('[data-a]').forEach(b => {
+      const a = b.dataset.a;
+      if (a === 'swap') b.onchange = () => { swap[s.slot] = +b.value; save(); render(); toast('Video swapped'); };
+      else b.onclick = () => act(a, s, v);
+    });
+    $('#list').appendChild(el);
+  }
+}
+
+async function act(a, s, v) {
+  if (a === 'copy') {
+    try { await navigator.clipboard.writeText(v.caption); }
+    catch { const t = document.createElement('textarea'); t.value = v.caption; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+    toast('Caption copied');
+  } else if (a === 'done') {
+    status[s.slot] ? delete status[s.slot] : status[s.slot] = new Date().toISOString(); save(); render();
+  } else if (a === 'cover') {
+    const blob = await (await fetch(v.cover)).blob(); const f = new File([blob], `cover-${v.video}.jpg`, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [f] }) && /Android|iPhone/i.test(navigator.userAgent)) await navigator.share({ files: [f] }).catch(() => {});
+    else download(f);
+  } else if (a === 'share') {
+    const f = videos[v.video]; if (!f) return toast('Tap "Load videos" first');
+    const file = f instanceof File ? f : new File([f], v.file, { type: 'video/mp4' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file] }).catch(() => {});
+    else download(file);
+  }
+}
+function download(f) { const u = URL.createObjectURL(f), l = document.createElement('a'); l.href = u; l.download = f.name; l.click(); setTimeout(() => URL.revokeObjectURL(u), 5000); }
+
+$('#pick').onchange = async e => {
+  let n = 0;
+  for (const f of e.target.files) { const m = f.name.match(/^(\d{2})-/); if (!m) continue;
+    try { await dbPut(+m[1], f); videos[+m[1]] = f; n++; } catch (err) { toast('Phone storage is full'); break; } }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+  toast(`${n} videos loaded`); render(); e.target.value = '';
+};
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  filter = b.dataset.f; document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b)); render(); });
+
+(async () => {
+  slots = await (await fetch('slots.json', { cache: 'no-cache' })).json();
+  try { videos = await dbAll(); } catch {}
+  render();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+})();
+</script>
+</body>
+</html>
