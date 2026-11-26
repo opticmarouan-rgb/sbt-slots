@@ -1,0 +1,2 @@
+# sbt-slots
+Posting slots
