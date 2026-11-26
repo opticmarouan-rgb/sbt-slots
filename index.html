@@ -46,6 +46,7 @@ main{max-width:980px;margin:0 auto;padding:12px;display:grid;gap:12px;grid-templ
   <p id="sum">Loading…</p>
   <div class="bar">
     <div class="tabs"><button data-f="todo" class="on">To do</button> <button data-f="done">Scheduled</button> <button data-f="all">All</button></div>
+    <button id="inst" hidden style="border:0;background:#22c55e;color:#fff;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:600">Install app</button>
     <label>Load videos<input id="pick" type="file" accept="video/mp4" multiple hidden></label>
   </div>
 </header>
@@ -140,6 +141,10 @@ $('#pick').onchange = async e => {
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   filter = b.dataset.f; document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b)); render(); });
 
+let installEvt;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('#inst').hidden = false; });
+$('#inst').onclick = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $('#inst').hidden = true; };
+window.addEventListener('appinstalled', () => { $('#inst').hidden = true; toast('App installed'); });
 (async () => {
   slots = await (await fetch('slots.json', { cache: 'no-cache' })).json();
   try { videos = await dbAll(); } catch {}
