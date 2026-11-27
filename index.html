@@ -124,9 +124,16 @@ async function act(a, s, v) {
     else download(f);
   } else if (a === 'share') {
     const f = videos[v.video]; if (!f) return toast('Tap "Load videos" first');
-    const file = f instanceof File ? f : new File([f], v.file, { type: 'video/mp4' });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file] }).catch(() => {});
-    else download(file);
+    // Always re-wrap with an explicit video/mp4 type: Android's file picker sometimes gives an empty type,
+    // and Chrome then refuses to share the file.
+    const file = new File([f], v.file, { type: 'video/mp4' });
+    if (!navigator.share) { download(file); return toast('Sharing not available here: video downloaded instead'); }
+    try { await navigator.share({ files: [file] }); }
+    catch (err) {
+      if (err && err.name === 'AbortError') return;  // user closed the share sheet
+      toast('Share failed (' + (err && err.name || 'error') + '): saving the video instead');
+      download(file);
+    }
   }
 }
 function download(f) { const u = URL.createObjectURL(f), l = document.createElement('a'); l.href = u; l.download = f.name; l.click(); setTimeout(() => URL.revokeObjectURL(u), 5000); }
